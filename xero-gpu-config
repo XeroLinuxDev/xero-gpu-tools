@@ -1,46 +1,63 @@
 #!/usr/bin/env bash
 #
 # xero-gpu-config
-#
-# Post-install GPU configuration helper for XeroLinux.
-# Focus: install/remove NVIDIA proprietary stack and adjust boot config.
-#
-# - Detects GPUs (Intel / AMD / NVIDIA)
-# - Installs NVIDIA drivers if NVIDIA hardware is present
-# - Removes NVIDIA drivers if no NVIDIA hardware is present
-# - Updates mkinitcpio MODULES
-# - Updates GRUB kernel parameters
-# - Rebuilds initramfs and GRUB config
-#
-# This script is safe to run multiple times.
+# XeroLinux GPU Stack Installer & Cleaner
 #
 
 set -euo pipefail
 
+# -----------------------------------------------------
+# Colors
+# -----------------------------------------------------
+RED="\033[31m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+BLUE="\033[34m"
+MAGENTA="\033[35m"
+CYAN="\033[36m"
+BOLD="\033[1m"
+RESET="\033[0m"
+
+# -----------------------------------------------------
+# Auto-elevate via sudo
+# -----------------------------------------------------
+if (( EUID != 0 )); then
+    exec sudo "$0" "$@"
+fi
+
 LOGFILE="/var/log/xero-gpu-config.log"
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOGFILE"
-}
-
-require_root() {
-    if [[ $EUID -ne 0 ]]; then
-        echo "This tool must run as root. Use:"
-        echo "  sudo xero-gpu-config"
-        exit 1
-    fi
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOGFILE"
 }
 
 pause_confirm() {
     local prompt="$1"
-    read -r -p "$prompt [y/N]: " answer
+    echo
+    read -r -p "$(echo -e "${YELLOW}${prompt}${RESET} [y/N]: ")" answer
     case "$answer" in
         [Yy]*) return 0 ;;
         *)     return 1 ;;
     esac
 }
 
-# ---------------- GPU detection ---------------- #
+# -----------------------------------------------------
+# Banner
+# -----------------------------------------------------
+clear
+echo -e "${CYAN}"
+echo "──────────────────────────────────────────"
+echo "     XeroLinux GPU Configuration Utility"
+echo "──────────────────────────────────────────"
+echo -e "${RESET}"
+sleep 0.2
+
+echo -e "${MAGENTA}Log file: $LOGFILE${RESET}"
+echo
+
+# -----------------------------------------------------
+# GPU detection
+# -----------------------------------------------------
 
 HAS_INTEL=0
 HAS_AMD=0
@@ -49,6 +66,9 @@ HAS_NVIDIA=0
 detect_gpus() {
     local gpuinfo
     gpuinfo="$(lspci -nnk | grep -E 'VGA|3D|Display' || true)"
+
+    echo -e "${BLUE}Detecting GPUs...${RESET}"
+    sleep 0.3
 
     if echo "$gpuinfo" | grep -qi "Intel"; then
         HAS_INTEL=1
@@ -60,54 +80,59 @@ detect_gpus() {
         HAS_NVIDIA=1
     fi
 
-    log "Detected GPUs:"
-    log "  Intel : $HAS_INTEL"
-    log "  AMD   : $HAS_AMD"
-    log "  NVIDIA: $HAS_NVIDIA"
-    log "Full lspci GPU lines:"
+    echo -e "${GREEN}Detected:${RESET}"
+    [[ $HAS_INTEL -eq 1 ]] && echo " • Intel GPU"
+    [[ $HAS_AMD -eq 1 ]] && echo " • AMD GPU"
+    [[ $HAS_NVIDIA -eq 1 ]] && echo " • NVIDIA GPU"
+    echo
+
+    log "GPU Info:"
     log "$gpuinfo"
 }
 
+# -----------------------------------------------------
+# NVIDIA package set
+# -----------------------------------------------------
+NVIDIA_PKGS=(
+    libvdpau
+    nvidia-utils
+    opencl-nvidia
+    nvidia-settings
+    nvidia-open-dkms
+    lib32-nvidia-utils
+    lib32-opencl-nvidia
+    linux-firmware-nvidia
+)
+
 nvidia_installed() {
-    pacman -Qq nvidia nvidia-utils nvidia-settings &>/dev/null
+    for pkg in "${NVIDIA_PKGS[@]}"; do
+        if pacman -Qq "$pkg" &>/dev/null; then
+            return 0
+        fi
+    done
+    return 1
 }
 
-# ---------------- mkinitcpio helpers ---------------- #
-
+# -----------------------------------------------------
+# mkinitcpio helpers
+# -----------------------------------------------------
 ensure_nvidia_modules_in_mkinitcpio() {
     local conf="/etc/mkinitcpio.conf"
-    if [[ ! -f "$conf" ]]; then
-        log "mkinitcpio.conf not found at $conf, skipping NVIDIA module injection."
-        return
-    fi
+    echo -e "${BLUE}Injecting NVIDIA modules into mkinitcpio.conf...${RESET}"
 
-    if grep -q "nvidia nvidia_modeset nvidia_uvm nvidia_drm" "$conf"; then
-        log "NVIDIA modules already present in mkinitcpio.conf."
-        return
-    fi
-
-    log "Injecting NVIDIA modules into mkinitcpio.conf."
     sed -i '/^MODULES=/ s/(/(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' "$conf"
 }
 
 remove_nvidia_modules_from_mkinitcpio() {
     local conf="/etc/mkinitcpio.conf"
-    if [[ ! -f "$conf" ]]; then
-        log "mkinitcpio.conf not found at $conf, skipping NVIDIA module removal."
-        return
-    fi
+    echo -e "${YELLOW}Removing NVIDIA modules from mkinitcpio.conf...${RESET}"
 
-    if ! grep -q "nvidia" "$conf"; then
-        log "No NVIDIA modules found in mkinitcpio.conf, nothing to remove."
-        return
-    fi
-
-    log "Removing NVIDIA modules from mkinitcpio.conf."
     sed -i 's/nvidia_drm //g; s/nvidia_uvm //g; s/nvidia_modeset //g; s/nvidia //g' "$conf"
 }
 
-# ---------------- GRUB helpers ---------------- #
-
+# -----------------------------------------------------
+# GRUB helpers
+# -----------------------------------------------------
 grub_exists() {
     [[ -f /etc/default/grub ]]
 }
@@ -117,14 +142,12 @@ get_grub_cmdline() {
 }
 
 set_grub_cmdline() {
-    local new="$1"
-    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\".*\"|GRUB_CMDLINE_LINUX_DEFAULT=\"$new\"|" /etc/default/grub
+    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\".*\"|GRUB_CMDLINE_LINUX_DEFAULT=\"$1\"|" /etc/default/grub
 }
 
 ensure_kernel_param() {
     local current="$1"
     local param="$2"
-
     if grep -qw "$param" <<< "$current"; then
         echo "$current"
     else
@@ -132,21 +155,10 @@ ensure_kernel_param() {
     fi
 }
 
-remove_kernel_param() {
-    local current="$1"
-    local param="$2"
-
-    # remove exact word
-    echo "$current" | sed -E "s/(^| )$param( |$)/ /g" | tr -s ' '
-}
-
 configure_grub_for_nvidia() {
-    if ! grub_exists; then
-        log "No /etc/default/grub, skipping GRUB NVIDIA flag configuration."
-        return
-    fi
-
+    echo -e "${BLUE}Configuring GRUB for NVIDIA...${RESET}"
     local current new
+
     current="$(get_grub_cmdline)"
 
     new="$current"
@@ -154,131 +166,101 @@ configure_grub_for_nvidia() {
     new="$(ensure_kernel_param "$new" "modprobe.blacklist=nouveau")"
     new="$(ensure_kernel_param "$new" "nouveau.modeset=0")"
 
-    log "Updating GRUB_CMDLINE_LINUX_DEFAULT for NVIDIA:"
-    log "  Old: $current"
-    log "  New: $new"
     set_grub_cmdline "$new"
 }
 
 cleanup_grub_for_no_nvidia() {
-    if ! grub_exists; then
-        log "No /etc/default/grub, skipping GRUB cleanup."
-        return
-    fi
-
+    echo -e "${YELLOW}Cleaning up GRUB NVIDIA flags...${RESET}"
     local current new
+
     current="$(get_grub_cmdline)"
     new="$current"
 
-    new="$(remove_kernel_param "$new" "nvidia_drm.modeset=1")"
-    new="$(remove_kernel_param "$new" "modprobe.blacklist=nouveau")"
-    new="$(remove_kernel_param "$new" "nouveau.modeset=0")"
+    new="$(echo "$new" | sed -E "s/(^| )nvidia_drm.modeset=1( |$)/ /g")"
+    new="$(echo "$new" | sed -E "s/(^| )modprobe\.blacklist=nouveau( |$)/ /g")"
+    new="$(echo "$new" | sed -E "s/(^| )nouveau.modeset=0( |$)/ /g")"
 
-    log "Cleaning GRUB_CMDLINE_LINUX_DEFAULT after NVIDIA removal:"
-    log "  Old: $current"
-    log "  New: $new"
     set_grub_cmdline "$new"
 }
 
 regenerate_grub() {
     if [[ -x /usr/bin/grub-mkconfig ]] && [[ -d /boot/grub ]]; then
-        log "Regenerating GRUB config."
+        echo -e "${BLUE}Regenerating GRUB config...${RESET}"
         grub-mkconfig -o /boot/grub/grub.cfg | tee -a "$LOGFILE"
-    else
-        log "GRUB not detected (no grub-mkconfig or /boot/grub). Skipping GRUB regeneration."
     fi
 }
 
-# ---------------- Core actions ---------------- #
-
+# -----------------------------------------------------
+# NVIDIA actions
+# -----------------------------------------------------
 install_nvidia_stack() {
-    log "Installing NVIDIA driver stack via pacman."
-    pacman -Sy --needed --noconfirm nvidia nvidia-utils nvidia-settings
+    echo -e "${GREEN}${BOLD}Installing NVIDIA driver stack...${RESET}"
+    pacman -Sy --needed --noconfirm "${NVIDIA_PKGS[@]}"
 
     ensure_nvidia_modules_in_mkinitcpio
     configure_grub_for_nvidia
 
-    log "Rebuilding initramfs with mkinitcpio -P."
+    echo -e "${CYAN}Rebuilding initramfs...${RESET}"
     mkinitcpio -P | tee -a "$LOGFILE"
 
     regenerate_grub
 
-    log "NVIDIA configuration complete."
+    echo -e "${GREEN}${BOLD}NVIDIA installation complete!${RESET}"
 }
 
 remove_nvidia_stack() {
-    log "Removing NVIDIA driver stack via pacman."
-    pacman -Rns --noconfirm nvidia nvidia-utils nvidia-settings || log "Some NVIDIA packages might not be installed, continuing."
+    echo -e "${YELLOW}${BOLD}Removing NVIDIA drivers...${RESET}"
+
+    for pkg in "${NVIDIA_PKGS[@]}"; do
+        if pacman -Qq "$pkg" &>/dev/null; then
+            echo -e "${YELLOW}Removing $pkg...${RESET}"
+            pacman -Rdd --noconfirm "$pkg" || true
+        fi
+    done
 
     remove_nvidia_modules_from_mkinitcpio
     cleanup_grub_for_no_nvidia
 
-    log "Rebuilding initramfs with mkinitcpio -P."
+    echo -e "${CYAN}Rebuilding initramfs...${RESET}"
     mkinitcpio -P | tee -a "$LOGFILE"
 
     regenerate_grub
 
-    log "NVIDIA removal complete."
+    echo -e "${GREEN}${BOLD}NVIDIA removal complete!${RESET}"
 }
 
-# ---------------- Main logic ---------------- #
-
+# -----------------------------------------------------
+# Main logic
+# -----------------------------------------------------
 main() {
-    require_root
     mkdir -p "$(dirname "$LOGFILE")"
     log "===== xero-gpu-config started ====="
 
     detect_gpus
 
     if (( HAS_NVIDIA == 1 )); then
-        log "NVIDIA GPU detected."
+        echo -e "${GREEN}${BOLD}NVIDIA GPU detected.${RESET}"
 
         if nvidia_installed; then
-            log "NVIDIA drivers already installed."
-
-            if pause_confirm "NVIDIA drivers are present. Reapply NVIDIA boot and initramfs configuration?"; then
-                ensure_nvidia_modules_in_mkinitcpio
-                configure_grub_for_nvidia
-                log "Rebuilding initramfs with mkinitcpio -P."
-                mkinitcpio -P | tee -a "$LOGFILE"
-                regenerate_grub
-                log "NVIDIA configuration reapplied."
-            else
-                log "User chose not to reapply configuration. Nothing to do."
+            if pause_confirm "NVIDIA stack already installed. Reapply configuration?"; then
+                install_nvidia_stack
             fi
         else
-            echo
-            echo "NVIDIA GPU detected, but NVIDIA drivers are NOT installed."
-            echo "This tool will:"
-            echo "  - Install: nvidia, nvidia-utils, nvidia-settings"
-            echo "  - Inject NVIDIA modules into mkinitcpio.conf"
-            echo "  - Add NVIDIA kernel flags and blacklist nouveau in GRUB"
-            echo "  - Rebuild initramfs and GRUB config"
-            echo
-
-            if pause_confirm "Proceed with NVIDIA installation and configuration?"; then
+            echo -e "${YELLOW}NVIDIA GPU found but drivers are missing.${RESET}"
+            if pause_confirm "Install full NVIDIA stack now?"; then
                 install_nvidia_stack
-            else
-                log "User cancelled NVIDIA installation."
             fi
         fi
 
     else
-        log "No NVIDIA GPU detected."
+        echo -e "${RED}${BOLD}No NVIDIA GPU detected.${RESET}"
 
         if nvidia_installed; then
-            echo
-            echo "No NVIDIA GPU detected, but NVIDIA packages are installed."
-            echo "This tool can remove the NVIDIA stack and clean up boot configuration."
-            echo
-
-            if pause_confirm "Remove NVIDIA drivers and clean configuration?"; then
+            if pause_confirm "Remove installed NVIDIA drivers?"; then
                 remove_nvidia_stack
-            else
-                log "User chose to keep NVIDIA stack even without NVIDIA hardware."
             fi
         else
-            log "No NVIDIA GPU and no NVIDIA drivers installed. Nothing to do."
+            echo -e "${BLUE}Nothing to do.${RESET}"
         fi
     fi
 
