@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+FLAG="/var/lib/xero-gpu/changed"
+
+# Only run in a graphical session
+if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    exit 0
+fi
+
+# No change → nothing to do
+if [[ ! -f "$FLAG" ]]; then
+    exit 0
+fi
+
+# Remove the flag so it doesn't keep spamming
+rm -f "$FLAG"
+
+# Simple Plasma dialog
+kdialog --yesno "XeroLinux detected a GPU hardware change.
+
+Do you want to run the GPU configuration tool now?" --title "GPU Change Detected"
+
+if [[ $? -eq 0 ]]; then
+    # Run in a terminal so user can see what's happening
+    konsole -e bash -c "sudo xero-gpu-config; echo 'Press Enter to close'; read"
+fi

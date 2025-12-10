@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=GPU Change Detected
+Comment=Notify when GPU hardware changes and offer to reconfigure drivers
+Exec=/usr/bin/xero-gpu-notify
+Icon=device_pci
+OnlyShowIn=KDE;GNOME;XFCE;LXQt;
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+

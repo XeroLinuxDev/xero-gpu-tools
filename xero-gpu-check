@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+STATE_DIR="/var/lib/xero-gpu"
+CURRENT_HW="$STATE_DIR/hw-current"
+CHANGED_FLAG="$STATE_DIR/changed"
+
+mkdir -p "$STATE_DIR"
+
+detect_now="$(lspci -nn | grep -E 'VGA|3D|Display' | sort)"
+
+# If no previous snapshot → create one and exit
+if [[ ! -f "$CURRENT_HW" ]]; then
+    echo "$detect_now" > "$CURRENT_HW"
+    exit 0
+fi
+
+previous="$(cat "$CURRENT_HW")"
+
+# Compare
+if [[ "$detect_now" != "$previous" ]]; then
+    echo "$detect_now" > "$CURRENT_HW"
+    echo "changed" > "$CHANGED_FLAG"
+fi
