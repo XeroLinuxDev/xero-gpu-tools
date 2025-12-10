@@ -1,1 +1,1 @@
-# xero-gpu-tools
+# XeroLinux GPU Tools/Scripts
