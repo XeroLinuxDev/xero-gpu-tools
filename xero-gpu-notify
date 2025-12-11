@@ -1,26 +1,43 @@
 #!/usr/bin/env bash
 
 FLAG="/var/lib/xero-gpu/changed"
+LOCKFILE="/tmp/xero-gpu-notify.lock"
 
-# Only run in a graphical session
+# Prevent double execution
+if [[ -e "$LOCKFILE" ]]; then
+    exit 0
+fi
+touch "$LOCKFILE"
+
+# Only run inside a KDE Plasma session
+if ! qdbus org.kde.KWin /KWin org.kde.KWin.supportInformation &>/dev/null; then
+    rm -f "$LOCKFILE"
+    exit 0
+fi
+
+# Only proceed if GUI exists
 if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    rm -f "$LOCKFILE"
     exit 0
 fi
 
-# No change → nothing to do
+# Nothing changed → exit
 if [[ ! -f "$FLAG" ]]; then
+    rm -f "$LOCKFILE"
     exit 0
 fi
 
-# Remove the flag so it doesn't keep spamming
+# Clear change flag so it doesn't spam
 rm -f "$FLAG"
 
-# Simple Plasma dialog
-kdialog --yesno "XeroLinux detected a GPU hardware change.
+# Show dialog
+/usr/bin/kdialog --yesno "XeroLinux detected a GPU hardware change.
 
-Do you want to run the GPU configuration tool now?" --title "GPU Change Detected"
+Do you want to run the GPU configuration tool now?" \
+--title "GPU Change Detected"
 
 if [[ $? -eq 0 ]]; then
-    # Run in a terminal so user can see what's happening
-    konsole -e bash -c "sudo xero-gpu-config; echo 'Press Enter to close'; read"
+    /usr/bin/konsole -e bash -c "/usr/bin/sudo /usr/bin/xero-gpu-config; echo 'Press Enter to close'; read"
 fi
+
+rm -f "$LOCKFILE"

@@ -1,6 +1,6 @@
 pkgname=xero-gpu-tools
 pkgver=1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="XeroLinux GPU hardware change detection and driver configuration tools"
 arch=('any')
 license=('GPL')
