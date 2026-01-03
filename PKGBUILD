@@ -1,6 +1,6 @@
 pkgname=xero-gpu-tools
-pkgver=1.0
-pkgrel=2
+pkgver=1.1
+pkgrel=1
 pkgdesc="XeroLinux GPU hardware change detection and driver configuration tools"
 arch=('any')
 license=('GPL')
@@ -16,9 +16,9 @@ sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 package() {
     # Scripts
-    install -Dm755 "${srcdir}/xero-gpu-config" "$pkgdir/usr/bin/xero-gpu-config"
-    install -Dm755 "${srcdir}/xero-gpu-check" "$pkgdir/usr/bin/xero-gpu-check"
-    install -Dm755 "${srcdir}/xero-gpu-notify" "$pkgdir/usr/bin/xero-gpu-notify"
+    install -Dm755 "${srcdir}/xero-gpu-config" "$pkgdir/usr/local/bin/xero-gpu-config"
+    install -Dm755 "${srcdir}/xero-gpu-check" "$pkgdir/usr/local/bin/xero-gpu-check"
+    install -Dm755 "${srcdir}/xero-gpu-notify" "$pkgdir/usr/local/bin/xero-gpu-notify"
 
     # systemd service
     install -Dm644 "${srcdir}/xero-gpu-check.service" \
